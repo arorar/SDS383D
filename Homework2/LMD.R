@@ -16,16 +16,15 @@ temp <- (K %*% m + t(X) %*% Lambda %*% y)
 K.star <- K + XtLambdaX; temp.K.star <- solve(K.star)
 mu.star <- temp.K.star %*% temp
 d.star <- d + n + p
-eta.star <- t(y) %*% Lambda %*% y + t(m) %*% K %*% m + eta - 
+eta.star <- t(y) %*% Lambda %*% y + t(m) %*% K %*% m + eta -
   t(temp) %*% temp.K.star %*% temp
 
-linMod = lm(y ~ X-1)
-plot(X[,2], y, pch = 1, cex = 0.8, asp = 1, xlab = 'Defense Spending', 
-     ylab = 'GDP Growth',
+linMod <- lm(y ~ X-1)
+plot(X[,2], y, pch = 1, cex = 0.8, xlab = 'Defense Spending', ylab = 'GDP Growth',
      main = "Comparison of Bayesian vs Frequentist LM")
 abline(coef = c(linMod$coefficients[1], linMod$coefficients[2]), col = "red")
 abline(coef = c(mu.star[1], b = mu.star[2]), col = 'blue')
-legend('topright', bty = "n", legend = c('LM','BayesLM'), lty = 1, 
+legend('topright', bty = "n", legend = c('LM','BayesLM'), lty = 1,
        col = c('red', 'blue'))
 
 
