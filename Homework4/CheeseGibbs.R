@@ -7,42 +7,43 @@ library(LaplacesDemon)
 #			(mu,Sigma) ~ Normal-Inv-Wishart(m,v,C,d)
 #			sig.sq ~ 1/sig.sq (Jeffrey's Prior)
 
-gibbsCheese <- function(y, X, idx, m, v, C, d,iter= 10000, burn=1000, thin=2) {
+gibbsCheese <- function(y, X, idx, m, v, C, d,iter= 1000, burn=500, thin=2) {
   
-  n <- length(y); p <- ncol(X); stores <- length(unique(idx$store))
-  beta <- array(0,dim=c(stores,p,iter))
+  n <- length(y); p <- ncol(X); nstores <- length(unique(idx$store))
+  beta <- array(0,dim=c(nstores,p,iter))
   mu <- matrix(0,iter,p); Sigma <- array(0, dim=c(p, p, iter))
   sig.sq <- rep(0,iter)
   
-  beta[,,1] <- rep(0, stores*p);  mu[1,] <- rep(mean(y),p); Sigma[,,1] <- diag(p); sig.sq[1] <- 1
+  beta[,,1] <- rep(0, nstores*p);  mu[1,] <- rep(mean(y),p); Sigma[,,1] <- diag(p); sig.sq[1] <- 1
   
-  for (k in 2:iter) {
+  for (iter in 2:iter) {
     
-    Sig.inv <- solve(Sigma[,,k-1])
-    for (j in 1:stores){	
+    #Update beta
+    Sig.inv <- solve(Sigma[,,iter-1])
+    for (sto in 1:nstores){	
       
-      bStore <- which(j==idx$storenum)
+      bStore <- which(sto==idx$storenum)
       Xi <-  X[bStore,]; yi <- y[bStore]; nt <- length(yi)
-      beta.var <- solve( Sigma[,,k-1] + (nt/sig.sq[k-1]) * crossprod(Xi)	)
-      beta.mean <- beta.var %*% (Sig.inv %*% mu[k-1,] + (nt/sig.sq[k-1]) * t(Xi) %*% yi )
-      beta[j,,k] <- rmvnorm(1, beta.mean, beta.var)
+      beta.post.var <- solve(Sigma[,,iter-1] + (nt/sig.sq[iter-1]) * crossprod(Xi))
+      beta.post.mean <- beta.post.var %*% (Sig.inv %*% mu[iter-1,] + (nt/sig.sq[iter-1]) * t(Xi) %*% yi )
+      beta[sto,,iter] <- rmvnorm(1, beta.post.mean, beta.post.var)
     }
     
     #Update sig.sq
-    beta.lookup <- beta[idx$store,,k]; SS <- sum((y - X %*% t(beta.lookup))^2)
-    sig.sq[k] <- 1/rgamma(1, n/2, SS/2)
+    beta.lookup <- beta[idx$store,,iter]; SS <- sum((y - X %*% t(beta.lookup))^2)
+    sig.sq[iter] <- 1/rgamma(1, n/2, SS/2)
     
     #Update mu and Sigma values for NIW
-    beta.bar <- colMeans(beta[,,k])
-    S <- t(beta[,,k] - beta.bar)	%*% (beta[,,k] - beta.bar)
+    beta.bar <- colMeans(beta[,,iter])
+    S <- t(beta[,,iter] - beta.bar)	%*% (beta[,,iter] - beta.bar)
     
-    mn = (v*m + stores*beta.bar)/(v + stores)
-    vn = v + stores
-    Cn = C + S + (v*stores / (v+stores)) * (beta.bar - m) %*% t(beta.bar - m)
-    dn = d + stores
+    mn = (v*m + nstores*beta.bar)/(v + nstores)
+    vn = v + nstores
+    Cn = C + S + (v*nstores / (v+nstores)) * (beta.bar - m) %*% t(beta.bar - m)
+    dn = d + nstores
     
     niv.sample <- rnorminvwishart(1, mn, vn, Cn, dn)
-    mu[k,] <- niv.sample$mu; Sigma[,,k] <- niv.sample$Sigma
+    mu[iter,] <- niv.sample$mu; Sigma[,,iter] <- niv.sample$Sigma
   }
   
   thinseq <- seq(1,iter - 1, by=thin)
@@ -50,17 +51,16 @@ gibbsCheese <- function(y, X, idx, m, v, C, d,iter= 10000, burn=1000, thin=2) {
   beta = beta[,,thinseq]; Sigma = Sigma[,,thinseq]; mu = mu[thinseq,]; sig.sq = sig.sq[thinseq]
   
   #posterior medians
-  beta.post.mean = apply(beta,c(1,2),median)
-  Sigma.post.mean = apply(Sigma,c(1,2),median)
-  mu.post.mean = apply(mu,2,median)
-  sig.sq.post.mean = median(sig.sq)
+  beta.post.median    <- apply(beta, 2, median)
+  sig.sq.post.median  <- median(sig.sq)
+  mu.post.median      <- apply(mu, 2, median)
+  Sigma.post.median   <- apply(Sigma,2, median)
   
-  #Return results.
-  list(beta=beta,Sigma=Sigma,mu=mu,sig.sq=sig.sq,
-              beta.post.mean=beta.post.mean, 
-              mu.post.mean=mu.post.mean,
-              Sigma.post.mean=Sigma.post.mean,
-              sig.sq.post.mean=sig.sq.post.mean)
+  list(beta = beta,Sigma = Sigma, mu = mu, sig.sq = sig.sq,
+              beta.post.median = beta.post.median, 
+              sig.sq.post.median = sig.sq.post.median,
+              mu.post.median = mu.post.median,
+              Sigma.post.median = Sigma.post.median)
 }
 
 data <- read.csv('cheese.csv')
@@ -72,7 +72,9 @@ data <- data %>%
   dplyr::select(-one_of("vol","price"))
 
 y  <- data$logQ; X <- model.matrix(logQ ~ 1 + logP + disp, data=data)
-idx <- cbind.data.frame(store=data$store, storenum=data$storenum, week=data$week)	
-p <- 3; m <- rep(0, 0); v = 1; C = diag(p); d = p + 1
+idx <- cbind.data.frame(store=data$store, storenum=data$storenum)	
+p <- 3; m <- rep(0, 1); v = 1; C = diag(p); d = p + 1
 
-output <- gibbsCheese(y, X, idx, m, v, C, d)
+mcoutput <- gibbsCheese(y, X, idx, m, v, C, d)
+
+
