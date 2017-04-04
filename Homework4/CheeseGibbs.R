@@ -7,9 +7,9 @@ library(LaplacesDemon)
 #			(mu,Sigma) ~ Normal-Inv-Wishart(m,v,C,d)
 #			sig.sq ~ 1/sig.sq (Jeffrey's Prior)
 
-gibbsCheese <- function(y, X, idx, m, v, C, d,iter= 1000, burn=500, thin=2) {
+gibbsCheese <- function(y, X, allStores, m, v, C, d,iter= 1000, burn=500, thin=2) {
   
-  n <- length(y); p <- ncol(X); nstores <- length(unique(idx$store))
+  n <- length(y); p <- ncol(X); nstores <- nlevels(allStores)
   beta <- array(0,dim=c(nstores,p,iter))
   mu <- matrix(0,iter,p); Sigma <- array(0, dim=c(p, p, iter))
   sig.sq <- rep(0,iter)
@@ -20,13 +20,13 @@ gibbsCheese <- function(y, X, idx, m, v, C, d,iter= 1000, burn=500, thin=2) {
     
     #Update beta
     Sig.inv <- solve(Sigma[,,iter-1])
-    for (sto in 1:nstores){	
+    for (ns in 1:nstores){	
       
-      bStore <- which(sto==idx$storenum)
+      bStore <- which(ns==as.integer(allStores))
       Xi <-  X[bStore,]; yi <- y[bStore]; nt <- length(yi)
       beta.post.var <- solve(Sigma[,,iter-1] + (nt/sig.sq[iter-1]) * crossprod(Xi))
       beta.post.mean <- beta.post.var %*% (Sig.inv %*% mu[iter-1,] + (nt/sig.sq[iter-1]) * t(Xi) %*% yi )
-      beta[sto,,iter] <- rmvnorm(1, beta.post.mean, beta.post.var)
+      beta[ns,,iter] <- rmvnorm(1, beta.post.mean, beta.post.var)
     }
     
     #Update sig.sq
@@ -65,16 +65,13 @@ gibbsCheese <- function(y, X, idx, m, v, C, d,iter= 1000, burn=500, thin=2) {
 
 data <- read.csv('cheese.csv')
 data <- data %>% 
-  mutate(logP = log(price), logQ = log(vol), disp = disp, 
-         week = ave(1:nrow(data), store, FUN=seq),
-         storenum = ave(1:nrow(data), week, FUN=seq)) %>%
+  mutate(logP = log(price), logQ = log(vol), disp = disp) %>%
   as.data.frame() %>%
   dplyr::select(-one_of("vol","price"))
 
 y  <- data$logQ; X <- model.matrix(logQ ~ 1 + logP + disp, data=data)
-idx <- cbind.data.frame(store=data$store, storenum=data$storenum)	
 p <- 3; m <- rep(0, 1); v = 1; C = diag(p); d = p + 1
 
-mcoutput <- gibbsCheese(y, X, idx, m, v, C, d)
+mcoutput <- gibbsCheese(y, X, data$store, m, v, C, d)
 
 
