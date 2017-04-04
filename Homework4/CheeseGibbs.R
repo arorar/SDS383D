@@ -1,3 +1,5 @@
+rm(list = ls())
+
 library(dplyr)
 library(LaplacesDemon)
 
@@ -7,7 +9,7 @@ library(LaplacesDemon)
 #			(mu,Sigma) ~ Normal-Inv-Wishart(m,v,C,d)
 #			sig.sq ~ 1/sig.sq (Jeffrey's Prior)
 
-gibbsCheese <- function(y, X, allStores, m, v, C, d,iter= 1000, burn=500, thin=2) {
+gibbsCheese <- function(y, X, allStores, m, v, C, d,iter= 500, burn=100, thin=2) {
   
   n <- length(y); p <- ncol(X); nstores <- nlevels(allStores)
   beta <- array(0,dim=c(nstores,p,iter))
@@ -20,17 +22,19 @@ gibbsCheese <- function(y, X, allStores, m, v, C, d,iter= 1000, burn=500, thin=2
     
     #Update beta
     Sig.inv <- solve(Sigma[,,iter-1])
-    for (ns in 1:nstores){	
-      
-      bStore <- which(ns==as.integer(allStores))
-      Xi <-  X[bStore,]; yi <- y[bStore]; nt <- length(yi)
-      beta.post.var <- solve(Sigma[,,iter-1] + (nt/sig.sq[iter-1]) * crossprod(Xi))
-      beta.post.mean <- beta.post.var %*% (Sig.inv %*% mu[iter-1,] + (nt/sig.sq[iter-1]) * t(Xi) %*% yi )
-      beta[ns,,iter] <- rmvnorm(1, beta.post.mean, beta.post.var)
-    }
+    
+    beta[,,iter] <- 
+      t(sapply(1:nstores, function(ns) {	
+        
+        bStore <- which(ns==as.integer(allStores))
+        Xi <-  X[bStore,]; yi <- y[bStore]; nt <- length(yi)
+        beta.post.var <- solve(Sigma[,,iter-1] + (nt/sig.sq[iter-1]) * crossprod(Xi))
+        beta.post.mean <- beta.post.var %*% (Sig.inv %*% mu[iter-1,] + (nt/sig.sq[iter-1]) * t(Xi) %*% yi )
+        rmvnorm(1, beta.post.mean, beta.post.var)
+      }))
     
     #Update sig.sq
-    beta.lookup <- beta[idx$store,,iter]; SS <- sum((y - X %*% t(beta.lookup))^2)
+    beta.lookup <- beta[as.integer(allStores),,iter]; SS <- sum((y - X %*% t(beta.lookup))^2)
     sig.sq[iter] <- 1/rgamma(1, n/2, SS/2)
     
     #Update mu and Sigma values for NIW
@@ -54,13 +58,13 @@ gibbsCheese <- function(y, X, allStores, m, v, C, d,iter= 1000, burn=500, thin=2
   beta.post.median    <- apply(beta, 2, median)
   sig.sq.post.median  <- median(sig.sq)
   mu.post.median      <- apply(mu, 2, median)
-  Sigma.post.median   <- apply(Sigma,2, median)
+  Sigma.post.median   <- Sigma[,iter]
   
   list(beta = beta,Sigma = Sigma, mu = mu, sig.sq = sig.sq,
               beta.post.median = beta.post.median, 
               sig.sq.post.median = sig.sq.post.median,
               mu.post.median = mu.post.median,
-              Sigma.post.median = Sigma.post.median)
+              Sigma.post.mean = apply(Sigma, c(1,2), mean))
 }
 
 data <- read.csv('cheese.csv')
