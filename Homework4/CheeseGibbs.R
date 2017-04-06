@@ -4,44 +4,79 @@ library(dplyr)
 library(mvtnorm)
 library(MCMCpack)
 
-# No fixed effects. Missing beta
-# Sampling Model:		y_{it} ~ N(Z_{it} gamma_i, sig.sq)
+# Sampling Model:		y_{it} ~ N(X_{it} beta + Z_{it} gamma_i, sig.sq)
 #	Priors:			
 #			gamma_i ~ N(0, Sigma)
 #			Sigma   ~ Inv-Wishart(d,C)
 #			sig.sq  ~ 1/sig.sq (Jeffrey's Prior)
+#     beta ~ 1 (flat prior)
 
-gibbsCheese <- function(y, Z, allStores, d, C, iter= 100, burn=20, thin=2) {
+gibbsCheese <- function(y, X, Z, allStores, d, C, iter= 10, burn=2, thin=2) {
   
-  n <- length(y); p <- ncol(Z); nstores <- nlevels(allStores); sig.sq <- rep(0,iter)
-  gamma <- array(0,dim=c(nstores,p,iter)); Sigma <- array(0, dim=c(p, p, iter))
+  n <- length(y); p <- ncol(Z); nstores <- nlevels(allStores); 
   
-  gamma[,,1] <- rep(0, nstores*p);  Sigma[,,1] <- diag(p); sig.sq[1] <- 1
+  #setup the structure for the chain
+  beta <- array(0, dim=c(ncol(X),iter)); gamma <- array(0,dim=c(nstores, ncol(Z), iter)); 
+  Sigma <- array(0, dim=c(p, p, iter)); sig.sq <- rep(0,iter)
+  
+  #initialize the chain
+  gamma[,,1] <- rep(0, nstores*p);  Sigma[,,1] <- diag(p)
+  beta[,1] <- sig.sq[1] <- 1
   
   for (iter in 2:iter) {
     
-    #Update gamma
+    # Update fixed effect for beta
+    beta.post.var <- solve(
+      sig.sq[iter-1]^-1 * sum(
+        sapply(1:nstores, function(ns) {
+          bStore <- which(ns==as.integer(allStores)); 
+          Xi <- X[bStore,,drop=FALSE]; crossprod(Xi)
+        })
+      ))
+    
+    beta.post.mean <- beta.post.var/sig.sq[iter-1] %*% sum(
+      sapply(1:nstores, function(ns) {
+        bStore <- which(ns==as.integer(allStores)); 
+        Zi <-  Z[bStore,]; yi <- y[bStore]; Xi <- X[bStore,,drop=FALSE]
+        t(yi - Zi %*% gamma[ns,,iter-1]) %*% Xi
+      })
+    )
+    
+    beta[,iter] <- rmvnorm(1, beta.post.mean, beta.post.var)
+    
+    # Update random effect gamma for each store
     Sig.inv <- solve(Sigma[,,iter-1])
     
     gamma[,,iter] <- 
       t(sapply(1:nstores, function(ns) {	
         
         bStore <- which(ns==as.integer(allStores))
-        Zi <-  Z[bStore,]; yi <- y[bStore]; nt <- length(yi)
+        Xi <- X[bStore,,drop=FALSE]; Zi <-  Z[bStore,]; yi <- y[bStore]
+        
         gamma.post.var <- solve(Sigma[,,iter-1] + (sig.sq[iter-1])^-1 * crossprod(Zi))
-        gamma.post.mean <- gamma.post.var %*% (sig.sq[iter-1]^-1 * t(Zi) %*% yi)
+        gamma.post.mean <- 
+          gamma.post.var %*% 
+          (sig.sq[iter-1]^-1 * t(Zi) %*% (yi - Xi %*% beta[,iter,drop=FALSE]))
+        
         rmvnorm(1, gamma.post.mean, gamma.post.var)
       }))
     
-    #Update sig.sq
-    gamma.store <- gamma[as.integer(allStores),,iter]; SS <- sum((y - Z %*% t(gamma.store))^2)
+    
+    # Update sig.sq
+    
+    SS <- sum(
+      sapply(1:nstores, function(ns) {
+        bStore <- which(ns==as.integer(allStores)); 
+        Zi <-  Z[bStore,]; yi <- y[bStore]; Xi <- X[bStore,,drop=FALSE]
+        crossprod(yi - Zi %*% gamma[ns,,iter] - Xi %*% beta[,iter,drop=FALSE])
+      })
+    )
+    
     sig.sq[iter] <- 1/rgamma(1, n/2, SS/2)
     
     #Update Sigma values for IW
     S <- 0; for (s in 1:nstores) S <- S + gamma[s,,iter] %*% t(gamma[s,,iter])
-    Cn = C + S
-    dn = d + nstores
-    
+    Cn = C + S; dn = d + nstores
     Sigma[,,iter] <- riwish(dn, Cn)
   }
   
@@ -67,6 +102,6 @@ data <- data %>%
 
 y  <- data$logQ; Z <- model.matrix(logQ ~ logP + disp, data=data)
 p <- d <- 3; C = diag(p)
-mcoutput <- gibbsCheese(y, Z, data$store, d, C)
+mcoutput <- gibbsCheese(y, Z[,1, drop = FALSE], Z, data$store, d, C)
 
 
